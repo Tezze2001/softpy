@@ -2,7 +2,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import numpy as np
 import scipy as sp
+from typing import Callable, Final
 
+def normal_distribution(x: np.number, mean: np.number = 0, var: np.number = 1):
+    return 1/np.sqrt(2 * np.pi * var) * np.exp(-((x-mean)**2)/(2*var))
 
 class FuzzySet(ABC):
     '''Abstract Class for a generic fuzzy set'''
@@ -23,22 +26,154 @@ class FuzzySet(ABC):
         pass
 
 class LambdaFuzzySet(FuzzySet):
-    '''Abstract Class for a fuzzy set defined by an explicitly specified membership function'''
-    def __init__(self, func : function):
-        self.func = func
-
-    def __call__(self, arg) -> np.number:
-        return self.func(arg)
+    ''' Class for a fuzzy set defined by an explicitly specified membership function'''
     
-    def __getitem__(self, alpha):
-        pass
 
-    def fuzziness(self):
-        pass
+    def __init__(self, 
+                 memberships_function: Callable[[np.number], np.number], 
+                 epsilon: np.number = 1e-3,
+                 bound: tuple[np.number, np.number] = None) -> None:
+        self.__epsilon: np.number = 1e-3
+        self.__bound: tuple[np.number, np.number]
+        self.__memberships_function: Callable[[np.number], np.number]
+        self.__f: np.number = -1
+        self.__h: np.number = -1
+        
+        if not isinstance(bound, tuple):
+            raise TypeError("Bound should be a tuple that expresses the support " +
+                            "of memberships function")
 
-    def hartley(self):
-        pass
+        if (bound[0] > bound[1]):
+            raise ValueError("buond[0] should be less equal than buond[1]")
+        
+        if not isinstance(memberships_function, Callable):
+            raise TypeError("Memberships function should be a lambda that takes" + 
+                            "as input a real number and returns a value in [0,1]")
 
+        discr_memb_func = np.linspace(bound[0], 
+                                      bound[1] + 1, 
+                                      int((bound[1] - bound[0] + 1)/epsilon))
+        
+        discr_memb_func = np.array([0 if 0 <= memberships_function(x) <= 1 else 1 
+                                    for x in  discr_memb_func])
+
+        if sum(discr_memb_func) != 0:
+            raise ValueError(f"Membership degrees should be floats in [0,1]") 
+        
+        
+        if epsilon >= bound[1] - bound[0] + 1:
+            raise ValueError("Epsilon should be small number, ex: 1e-3")
+
+        self.__memberships_function = memberships_function
+        self.__epsilon = epsilon
+        self.__bound = bound
+        self.fuzziness()
+        self.hartley()
+
+    @property
+    def memberships_function(self) -> Callable:
+        return self.__memberships_function
+
+    @property
+    def epsilon(self) -> np.number:
+        return self.__epsilon
+    
+    @property
+    def bound(self) -> tuple:
+        return self.__bound
+
+    def __call__(self, arg: np.number) -> np.number:
+        '''
+        Compute membership degree of arg parameter.
+        '''
+        if not np.issubdtype(type(arg), np.number):
+            raise TypeError("Arg should be a number")
+        
+        if self.__bound[0] <= arg <= self.__bound[1]:
+            return self.__memberships_function(arg)
+        
+        return 0
+    
+    def __getitem__(self, alpha: np.number) -> np.ndarray:
+        '''
+        Compute alpha cut of membership function returning an approximation of bounds.
+        '''
+
+        if not np.issubdtype(type(alpha), np.number):
+            raise TypeError(f"Alpha should be a float in [0,1], is {type(alpha)}")
+
+        if alpha < 0 or alpha > 1:
+            raise ValueError(f"Alpha should be a float in [0,1], is {type(alpha)}")
+        
+        step = int((self.__bound[1] - self.__bound[0] + 1)/self.__epsilon)
+
+        x_values = np.linspace(self.__bound[0], 
+                               self.__bound[1], 
+                               step)
+        
+        discr_memb_func = np.array([self.__memberships_function(x) for x in  x_values])
+        '''
+        alpha_cut = (-1, -1)
+
+        for i in range(len(x_values)):
+            if alpha_cut[0] == -1 and discr_memb_func[i] >= alpha:
+                alpha_cut[0] = x_values[i]
+            break
+        
+        if alpha_cut[0] == -1:
+            return ()
+        
+        for i in range(len(x_values)):
+            if alpha_cut[1] == -1 and discr_memb_func[-i] >= alpha:
+                alpha_cut[1] = x_values[-i]
+            break
+        '''
+        alpha_cut = np.array([v if self(v) >= alpha else np.nan for v in discr_memb_func])
+        return alpha_cut
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, LambdaFuzzySet):
+            return False
+
+        return (self.__epsilon == other.__epsilon and 
+                self.__bound == other.__bound and 
+                self.__memberships_function == other.__memberships_function and
+                self.__f == other.__f and
+                self.__h == other.__h)
+
+    def fuzziness(self) -> np.number:
+        return 0
+    
+    def hartley(self) -> np.number:
+        return 0
+    '''
+
+    def __fuzzyness_function(self, x):
+        if np.abs(x - 0) <= self.__epsilon or np.abs(x - 1) <= self.__epsilon:
+            return 0
+        return self(x) * np.log2(1/self(x)) + (1 - self(x))*np.log2(1/(1-self(x)))
+    def fuzziness(self) -> np.number:
+        
+        As in the case of alpha cuts, it is generally impossible to compute the 
+        fuzziness of a continuous fuzzy set
+        analytically: thus, we perform a numerical integration of the fuzziness 
+        function between the minimum and maximum
+        values of the fuzzy set (it internally uses the __call__ method: notice 
+        that it is not implemented in ContinuousFuzzySet!)
+        if self.__f == -1:
+            self.__f = sp.integrate.quad(self.__fuzzyness_function, 
+                                         self.__bound[0], 
+                                         self.__bound[1], 
+                                         epsabs=self.__epsilon)[0]
+        return self.__f
+
+    def hartley(self) -> np.number:
+        if self.__h == -1:
+            self.__h = sp.integrate.quad(lambda x: np.log2(self[x][0][1] - self[x][0][0]),
+                                         0, 
+                                         1)[0]   
+        return self.__h
+        '''
 
 class DiscreteFuzzySet(FuzzySet):
     '''

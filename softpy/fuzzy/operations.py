@@ -42,22 +42,22 @@ class ContinuousFuzzyOWA(ContinuousFuzzySet):
         The constructor searches the given fuzzysets in order to determine the minimum and maximum of the result of OWA
         '''
         if not isinstance(fuzzysets, list) and not isinstance(fuzzysets, np.ndarray) and not isinstance(fuzzysets, tuple):
-            raise TypeError("arr should be a sequence")
+            raise TypeError("fuzzysets should be a sequence")
         
         if not isinstance(weights, list) and not isinstance(weights, np.ndarray) and not isinstance(weights, tuple):
-            raise TypeError("w should be a sequence")
+            raise TypeError("weights should be a sequence")
         
         if len(fuzzysets) != len(weights):
-            raise ValueError("arr and w should have the same length")
+            raise ValueError("fuzzysets and weights should have the same length")
         
         self.min = np.infty
         self.max = -np.infty
         
         for i in range(len(fuzzysets)):
             if not np.issubdtype(type(weights[i]), np.number) or weights[i] < 0 or weights[i] > 1:
-                raise TypeError("w should be a sequence of floats in [0,1]")
+                raise TypeError("weights should be a sequence of floats in [0,1]")
             if not isinstance(fuzzysets[i], ContinuousFuzzySet):
-                raise TypeError("Arguments should be all continuous fuzzy sets")
+                raise TypeError("fuzzysets should be all continuous fuzzy sets")
             if fuzzysets[i].min < self.min:
                 self.min = fuzzysets[i].min
             if fuzzysets[i].max > self.max:
