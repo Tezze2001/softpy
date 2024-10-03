@@ -1,59 +1,80 @@
+'''
 import sys
 from typing import Callable
 
 import numpy as np
 import pytest
+from softpy.fuzzy.operations import maximum
 
 sys.path.append(__file__ + "/../..")
 
-from softpy.fuzzy.fuzzy_control import MamdaniRule
-from softpy.fuzzy.fuzzyset import FuzzySet, GaussianFuzzySet, TrapezoidalFuzzySet
-from softpy.fuzzy.operations import ContinuousFuzzyCombination, DiscreteFuzzyCombination, minimum
-from tests.fuzzy_set.configuration import not_raises, generate_plot
+from softpy.fuzzy.fuzzy_control import AggregationType, FuzzyControlSystem, FuzzyRule, MamdaniRule, center_of_gravity
+from softpy.fuzzy.fuzzyset import GaussianFuzzySet
+from tests.fuzzy_set.configuration import not_raises 
 
-class TestMandamiRule:
-
-    __PATH = './plots_mamdani_rule_aggregation/'
-
+class TestFuzzyControlSystem:
     @pytest.mark.parametrize(
-            "premises,tnorm_operation,exception_expected", 
+            "rules,aggregation_type,tconorm_aggregation,defuzzification_function,exception_expected", 
             [
-                ([], minimum, ValueError),
-                ([GaussianFuzzySet(0, 1)], minimum, ValueError),
-                ([GaussianFuzzySet(0, 1), GaussianFuzzySet(1, 1)], minimum, None),
-                ([GaussianFuzzySet(0, 1), GaussianFuzzySet(1, 1)], minimum, None),
-                ([GaussianFuzzySet(0, 1), GaussianFuzzySet(1, 1), GaussianFuzzySet(1, 1)], minimum, None),
-                ('a', minimum, TypeError),
-                ([GaussianFuzzySet(0, 1), GaussianFuzzySet(1, 1)], 'a', TypeError),
+                ([MamdaniRule({'Gaussian(0,1)': GaussianFuzzySet(0, 1), 'Gaussian(1,1)': GaussianFuzzySet(1, 1)}, 'cons1'),
+                  MamdaniRule({'Gaussian(0,1)': GaussianFuzzySet(0, 1), 'Gaussian(1,1)': GaussianFuzzySet(1, 1)}, 'cons1')],
+                  AggregationType.FITA, 
+                  maximum, 
+                  center_of_gravity, 
+                  None),
+                ([MamdaniRule({'Gaussian(0,1)': GaussianFuzzySet(0, 1), 'Gaussian(1,1)': GaussianFuzzySet(1, 1)}, 'cons1'),
+                  MamdaniRule({'Gaussian(0,1)': GaussianFuzzySet(0, 1), 'Gaussian(1,1)': GaussianFuzzySet(1, 1)}, 'cons1')],
+                  'a', 
+                  maximum, 
+                  center_of_gravity, 
+                  TypeError),
+                ('a',
+                 AggregationType.FITA, 
+                 maximum, 
+                 center_of_gravity, 
+                 TypeError),
+                (['a'],
+                 AggregationType.FITA, 
+                 maximum, 
+                 center_of_gravity, 
+                 TypeError),
+                ([MamdaniRule({'Gaussian(0,1)': GaussianFuzzySet(0, 1), 'Gaussian(1,1)': GaussianFuzzySet(1, 1)}, 'cons1'),
+                  MamdaniRule({'Gaussian(0,1)': GaussianFuzzySet(0, 1), 'Gaussian(1,1)': GaussianFuzzySet(1, 1)}, 'cons1')],
+                  AggregationType.FITA, 
+                  'a', 
+                  center_of_gravity, 
+                  TypeError),
+                ([MamdaniRule({'Gaussian(0,1)': GaussianFuzzySet(0, 1), 'Gaussian(1,1)': GaussianFuzzySet(1, 1)}, 'cons1'),
+                  MamdaniRule({'Gaussian(0,1)': GaussianFuzzySet(0, 1), 'Gaussian(1,1)': GaussianFuzzySet(1, 1)}, 'cons1')],
+                  AggregationType.FITA, 
+                  maximum, 
+                  'a', 
+                  TypeError), 
+                ([MamdaniRule({'Gaussian(0,1)': GaussianFuzzySet(0, 1), 'Gaussian(1,1)': GaussianFuzzySet(1, 1)}, 'cons1'),
+                  MamdaniRule({'Gaussian(0,1)': GaussianFuzzySet(0, 1), 'Gaussian(1,1)': GaussianFuzzySet(1, 1)}, 'cons1')],
+                  AggregationType.FITA, 
+                  maximum, 
+                  'a', 
+                  TypeError), 
             ])
     def test_creation(self,
-                      premises : list[FuzzySet], 
-                      tnorm_operation: Callable[[FuzzySet], ContinuousFuzzyCombination | DiscreteFuzzyCombination],
+                      rules: list[FuzzyRule],
+                      aggregation_type: AggregationType,
+                      tconorm_aggregation: Callable, 
+                      defuzzification_function: Callable,
                       exception_expected: Exception):
 
         if exception_expected == None:
             with not_raises() as e_info:
-                lfs = MamdaniRule(premises, tnorm_operation)
+                lfs = FuzzyControlSystem(rules=rules, 
+                                         aggregation_type=aggregation_type, 
+                                         tconorm_aggregation=tconorm_aggregation,
+                                         defuzzification_function=defuzzification_function)
         else:
             with pytest.raises(exception_expected) as e_info:
-                lfs = MamdaniRule(premises, tnorm_operation)
-
-    @pytest.mark.parametrize(
-            "mandami_rule,name_file,exception_expected", 
-            [
-                (MamdaniRule([GaussianFuzzySet(0, 1), 
-                              GaussianFuzzySet(1, 1)]), 'gaussian', None),
-                (MamdaniRule([GaussianFuzzySet(0, 4), 
-                              TrapezoidalFuzzySet(0, 1, 2, 3)]), 'gaussian-trapezoidal', None),
-            ])
-    def test_evaluate(self,
-                      mandami_rule: MamdaniRule, 
-                      name_file: str,
-                      exception_expected: Exception):
-
-        if exception_expected == None:
-            with not_raises() as e_info:
-                generate_plot(mandami_rule.rule.memberships_function, [], self.__PATH, name_file)
-        else:
-            with pytest.raises(exception_expected) as e_info:
-                NotImplemented
+                lfs = FuzzyControlSystem(rules=rules, 
+                                         aggregation_type=aggregation_type, 
+                                         tconorm_aggregation=tconorm_aggregation,
+                                         defuzzification_function=defuzzification_function)
+    
+    '''

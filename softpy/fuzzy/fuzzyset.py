@@ -25,6 +25,11 @@ class FuzzySet(ABC):
     def hartley(self) -> np.number:
         pass
 
+    @abstractmethod
+    def memberships_function(self, x) -> np.number:
+        pass
+
+"""
 class LambdaFuzzySet(FuzzySet):
     '''Abstract Class for a fuzzy set defined by an explicitly specified membership function'''
     def __init__(self, func : function):
@@ -42,6 +47,7 @@ class LambdaFuzzySet(FuzzySet):
     def hartley(self):
         pass
 
+"""
 
 class DiscreteFuzzySet(FuzzySet):
     '''
@@ -90,23 +96,29 @@ class DiscreteFuzzySet(FuzzySet):
         return self.__set_items
     
     @property
-    def items(self) -> set:
+    def items(self) -> list:
         return self.__items
+    
+    @property
+    def dynamic(self) -> bool:
+        return self.__dynamic
+    
+    def memberships_function(self, x) -> np.number:
+        if x not in self.__set_items.keys():
+            if self.__dynamic:
+                self.__set_items[x] = len(self.__items)
+                self.__items = np.append(self.__items, x)
+                self.__memberships = np.append(self.__memberships, 0.0)
+            else:
+                raise ValueError("%s not in the support of the fuzzy set" % x)
+        return self.__memberships[self.__set_items[x]]
     
     def __call__(self, arg):
         '''
         Gets the membership degree of arg. Uses self.__set_items to enable quick look-up.
         Behavior changes according to value of dynamic
         '''
-        if arg not in self.__set_items.keys():
-            if self.__dynamic:
-                self.__set_items[arg] = len(self.__items)
-                self.__items = np.append(self.__items, arg)
-                self.__memberships = np.append(self.__memberships, 0.0)
-            else:
-                raise ValueError("%s not in the support of the fuzzy set" % arg)
-             
-        return self.__memberships[self.__set_items[arg]]
+        return self.memberships_function(arg)
         
     def __getitem__(self, alpha: np.number) -> np.ndarray:
         '''
@@ -215,7 +227,10 @@ class ContinuousFuzzySet(FuzzySet):
         #self.hartley()
 
     
-    def memberships_function(self, x: np.number) -> np.number:
+    def memberships_function(self, x) -> np.number:
+        if not np.issubdtype(type(x), np.number):
+            raise TypeError("x should be a number")
+        
         member = self.__memberships_function(x)
         
         if self.bound[0] <= x <= self.bound[1]:
@@ -248,7 +263,7 @@ class ContinuousFuzzySet(FuzzySet):
         if not np.issubdtype(type(alpha), np.number):
             raise TypeError(f"Alpha should be a float in [0,1], is {type(alpha)}")
 
-        if alpha <= 0 or alpha >= 1:
+        if alpha < 0 or alpha > 1:
             raise ValueError(f"Alpha should be a float in [0,1], is {type(alpha)}")
 
         step = int((self.bound[1] - self.bound[0] + 1)/self.epsilon)
@@ -259,7 +274,7 @@ class ContinuousFuzzySet(FuzzySet):
         
         discr_memb_func = np.array([self(x) for x in  x_values])
 
-        alpha_cut = np.array([v if v >= alpha else np.nan for v in discr_memb_func])
+        alpha_cut = np.array([v if memb >= alpha else np.nan for v, memb in zip(x_values, discr_memb_func)])
 
         return alpha_cut
 
@@ -285,29 +300,25 @@ class ContinuousFuzzySet(FuzzySet):
 
         if self._h == -1:
             
-            step = int((self.bound[1] - self.bound[0] + 1)/self.epsilon)
-            
-            x_values = np.linspace(self.bound[0], 
-                                self.bound[1], 
-                                step)
-            
-            discr_memb_func = np.array([self(x) for x in  x_values])
-
-            height = np.max(discr_memb_func)
-
-            self._h = sp.integrate.quad(lambda alpha: np.log2(np.count_nonzero(np.isnan(self[alpha]))), 
-                                         0, 
-                                         height, 
-                                         epsabs=self.epsilon)[0]
+            self._h =  np.log2(sp.integrate.quad(lambda x: self.memberships_function(x), 
+                                         self.bound[0], 
+                                         self.bound[1], 
+                                         epsabs=self.epsilon))[0]
         
         return self._h
+
+class SingletonFuzzySet(DiscreteFuzzySet):
+    def __init__(self, value, memb: np.number = 1) -> None:
+        super().__init__([value], [memb])
+
     
 class TriangularFuzzySet(ContinuousFuzzySet):
     def __init__(self, 
                  left: np.number,
                  spike: np.number,
                  right: np.number,
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(left), np.number):
             raise TypeError("a should be a number")
@@ -321,9 +332,12 @@ class TriangularFuzzySet(ContinuousFuzzySet):
         if not (left <= spike <= right):
             raise ValueError("Parameters a, b and c should be a <= b <= c")
 
+        if bound == None:
+            bound=(left, right)
+
         super().__init__(partial(mf.triangular, a = left, b = spike, c = right), 
                          epsilon=epsilon, 
-                         bound=(left, right))
+                         bound=bound)
 
         self.__left = left
         self.__spike = spike
@@ -336,7 +350,8 @@ class TrapezoidalFuzzySet(ContinuousFuzzySet):
                  left_upper: np.number,
                  right_upper: np.number,
                  right_lower: np.number,
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(left_lower), np.number):
             raise TypeError("left_lower should be a number")
@@ -354,11 +369,14 @@ class TrapezoidalFuzzySet(ContinuousFuzzySet):
             raise ValueError("Parameters left_lower, left_upper, right_upper and right_lower should be left_lower" +
                              "<= left_upper <= right_upper <= right_lower")
 
+        if bound == None:
+            bound=(left_lower, right_lower)
+            
         super().__init__(partial(mf.trapezoidal, 
                                  a = left_lower, 
                                  b = left_upper, 
                                  c = right_upper, 
-                                 d = right_lower), epsilon=epsilon, bound=(left_lower, right_lower))
+                                 d = right_lower), epsilon=epsilon, bound=bound)
 
         self.__left_lower = left_lower
         self.__left_upper = left_upper
@@ -370,7 +388,8 @@ class LinearZFuzzySet(ContinuousFuzzySet):
     def __init__(self, 
                  left_upper: np.number,
                  right_lower: np.number,
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(left_upper), np.number):
             raise TypeError("left_upper should be a number")
@@ -381,9 +400,12 @@ class LinearZFuzzySet(ContinuousFuzzySet):
         if not (left_upper <= right_lower):
             raise ValueError("Parameters left_upper and right_lower should be left_upper <= right_lower")
 
+        if bound == None:
+            bound=(-np.inf, right_lower)
+
         super().__init__(partial(mf.linear_z_shaped, 
                                  a = left_upper, 
-                                 b = right_lower), epsilon=epsilon, bound=(-np.inf, right_lower))
+                                 b = right_lower), epsilon=epsilon, bound=bound)
 
         self.__left_upper = left_upper
         self.__right_lower = right_lower
@@ -393,7 +415,8 @@ class LinearSFuzzySet(ContinuousFuzzySet):
     def __init__(self, 
                  left_lower: np.number,
                  right_upper: np.number,
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(left_lower), np.number):
             raise TypeError("left_lower should be a number")
@@ -404,9 +427,12 @@ class LinearSFuzzySet(ContinuousFuzzySet):
         if not (left_lower <= right_upper):
             raise ValueError("Parameters left_lower and right_upper should be left_lower <= right_upper")
 
+        if bound == None:
+            bound= (left_lower, np.inf)
+
         super().__init__(partial(mf.linear_s_shaped, 
                                  a = left_lower, 
-                                 b = right_upper), epsilon=epsilon, bound=(left_lower, np.inf))
+                                 b = right_upper), epsilon=epsilon, bound=bound)
 
         self.__left_lower = left_lower
         self.__right_upper = right_upper
@@ -416,7 +442,8 @@ class GaussianFuzzySet(ContinuousFuzzySet):
     def __init__(self, 
                  mean: np.number,
                  std: np.number,
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(mean), np.number):
             raise TypeError("mean should be a number")
@@ -427,7 +454,10 @@ class GaussianFuzzySet(ContinuousFuzzySet):
         if std <= 0:
             raise ValueError("std should greater than 0")
         
-        super().__init__(partial(mf.gaussian, mean=mean, std=std), epsilon=epsilon, bound=(-np.inf, np.inf))
+        if bound == None:
+            bound=(-np.inf, np.inf)
+
+        super().__init__(partial(mf.gaussian, mean=mean, std=std), epsilon=epsilon, bound=bound)
 
         self.__mean = mean
         self.__std = std
@@ -438,7 +468,8 @@ class Gaussian2FuzzySet(ContinuousFuzzySet):
                  std1: np.number,
                  mean2: np.number, 
                  std2: np.number,
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(mean1), np.number):
             raise TypeError("mean1 should be a number")
@@ -461,11 +492,14 @@ class Gaussian2FuzzySet(ContinuousFuzzySet):
         if mean1 > mean2:
             raise ValueError("mean1 should be less equal than mean2")
         
+        if bound == None:
+            bound=(-np.inf, np.inf)
+            
         super().__init__(partial(mf.gaussian2, 
                                  mean1=mean1, 
                                  std1=std1, 
                                  mean2=mean2, 
-                                 std2=std2), epsilon=epsilon, bound=(-np.inf, np.inf))
+                                 std2=std2), epsilon=epsilon, bound=bound)
 
         self.__mean1 = mean1
         self.__std1 = std1
@@ -477,7 +511,8 @@ class GBellFuzzySet(ContinuousFuzzySet):
                  width: np.number, 
                  slope: np.number,
                  center: np.number, 
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(width), np.number):
             raise TypeError("width should be a number")
@@ -494,10 +529,13 @@ class GBellFuzzySet(ContinuousFuzzySet):
         if not np.issubdtype(type(center), np.number):
             raise TypeError("center should be a number")
         
+        if bound == None:
+            bound=(-np.inf, np.inf)
+
         super().__init__(partial(mf.gbell, 
                                  a = width, 
                                  b = slope, 
-                                 c = center), epsilon=epsilon, bound=(-np.inf, +np.inf))
+                                 c = center), epsilon=epsilon, bound=bound)
 
         self.__width = width
         self.__slope = slope
@@ -507,7 +545,8 @@ class SigmoidalFuzzySet(ContinuousFuzzySet):
     def __init__(self, 
                  width: np.number, 
                  center: np.number,
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(width), np.number):
             raise TypeError("width should be a number")
@@ -518,9 +557,12 @@ class SigmoidalFuzzySet(ContinuousFuzzySet):
         if not np.issubdtype(type(center), np.number):
             raise TypeError("center should be a number")
         
+        if bound == None:
+            bound=(-np.inf, np.inf)
+
         super().__init__(partial(mf.sigmoidal, 
                                  a = width, 
-                                 c = center), epsilon=epsilon, bound=(-np.inf, np.inf))
+                                 c = center), epsilon=epsilon, bound=bound)
 
         self.__width = width
         self.__center = center
@@ -531,7 +573,8 @@ class DiffSigmoidalFuzzySet(ContinuousFuzzySet):
                  center1: np.number,
                  width2: np.number, 
                  center2: np.number,
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(width1), np.number):
             raise TypeError("width1 should be a number")
@@ -554,11 +597,14 @@ class DiffSigmoidalFuzzySet(ContinuousFuzzySet):
         if center1 >= center2:
             raise ValueError("center1 should be less equal than center2")
         
+        if bound == None:
+            bound=(-np.inf, np.inf)
+
         super().__init__(partial(mf.difference_sigmoidal, 
                                  a1 = width1, 
                                  c1 = center1, 
                                  a2 = width2, 
-                                 c2 = center2), epsilon=epsilon, bound=(-np.inf, np.inf))
+                                 c2 = center2), epsilon=epsilon, bound=bound)
 
         self.__width1 = width1
         self.__center1 = center1
@@ -572,7 +618,8 @@ class ProdSigmoidalFuzzySet(ContinuousFuzzySet):
                  center1: np.number,
                  width2: np.number, 
                  center2: np.number,
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(width1), np.number):
             raise TypeError("width1 should be a number")
@@ -595,11 +642,14 @@ class ProdSigmoidalFuzzySet(ContinuousFuzzySet):
         if center1 >= center2:
             raise ValueError("center1 should be less equal than center2")
         
+        if bound == None:
+            bound=(-np.inf, np.inf)
+
         super().__init__(partial(mf.product_sigmoidal, 
                                  a1 = width1, 
                                  c1 = center1, 
                                  a2 = width2, 
-                                 c2 = center2), epsilon=epsilon, bound=(-np.inf, np.inf))
+                                 c2 = center2), epsilon=epsilon, bound=bound)
 
         self.__width1 = width1
         self.__center1 = center1
@@ -610,7 +660,8 @@ class ZShapedFuzzySet(ContinuousFuzzySet):
     def __init__(self, 
                  left_upper: np.number, 
                  right_lower: np.number,
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(left_upper), np.number):
             raise TypeError("left_upper should be a number")
@@ -621,9 +672,12 @@ class ZShapedFuzzySet(ContinuousFuzzySet):
         if left_upper > right_lower:
             raise ValueError("left_upper should be less equal than right_lower ")
                 
+        if bound == None:
+            bound=(-np.inf, np.inf)
+
         super().__init__(partial(mf.z_shaped, 
                                  a = left_upper, 
-                                 b = right_lower), epsilon=epsilon, bound=(-np.inf, np.inf))
+                                 b = right_lower), epsilon=epsilon, bound=bound)
 
         self.__left_upper = left_upper
         self.__right_lower = right_lower
@@ -632,7 +686,8 @@ class SShapedFuzzySet(ContinuousFuzzySet):
     def __init__(self, 
                  left_lower: np.number, 
                  right_upper: np.number,
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(left_lower), np.number):
             raise TypeError("left_lower should be a number")
@@ -642,10 +697,13 @@ class SShapedFuzzySet(ContinuousFuzzySet):
         
         if left_lower > right_upper:
             raise ValueError("left_upper should be less equal than right_lower ")
-                
+
+        if bound == None:
+            bound=(-np.inf, np.inf)
+
         super().__init__(partial(mf.s_shaped, 
                                  a = left_lower, 
-                                 b = right_upper), epsilon=epsilon, bound=(-np.inf, np.inf))
+                                 b = right_upper), epsilon=epsilon, bound=bound)
 
         self.__left_lower = left_lower
         self.__right_upper = right_upper
@@ -656,7 +714,8 @@ class PiShapedFuzzySet(ContinuousFuzzySet):
                  left_upper: np.number,
                  right_upper: np.number,
                  right_lower: np.number, 
-                 epsilon: np.number = 0.001) -> None:
+                 epsilon: np.number = 0.001,
+                 bound: tuple[np.number, np.number] = None) -> None:
         
         if not np.issubdtype(type(left_lower), np.number):
             raise TypeError("left_lower should be a number")
@@ -673,14 +732,16 @@ class PiShapedFuzzySet(ContinuousFuzzySet):
         if not (left_lower <= left_upper < right_upper <= right_lower):
             raise ValueError("Parameters should be left_lower <= left_upper <= right_upper <= right_lower ")
                 
+        if bound == None:
+            bound=(-np.inf, np.inf)
+
         super().__init__(partial(mf.pi_shaped, 
                                  a = left_lower, 
                                  b = left_upper,
                                  c = right_upper, 
-                                 d = right_lower), epsilon=epsilon, bound=(-np.inf, np.inf))
+                                 d = right_lower), epsilon=epsilon, bound=bound)
 
         self.__left_lower = left_lower
         self.__left_upper = left_upper
         self.__right_upper = right_upper
         self.__right_lower = right_lower
-
